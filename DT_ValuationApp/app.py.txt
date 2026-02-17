@@ -1,0 +1,78 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import plotly.express as px
+from io import BytesIO
+
+# Page Config
+st.set_page_config(page_title="DT Valuation Engine", layout="wide")
+
+st.title("🚀 Dynatrace (DT) Peer Valuation Engine")
+st.markdown("Automated benchmarking vs. the AI Observability Sector.")
+
+# Sidebar Settings
+st.sidebar.header("Peer Group Configuration")
+main_ticker = "DT"
+# These are the standard peers for Dynatrace
+default_peers = ['DDOG', 'ESTC', 'MDB', 'SNOW', 'CRWD', 'NET']
+peer_tickers = st.sidebar.multiselect("Select Peers", default_peers, default=['DDOG', 'ESTC', 'MDB', 'SNOW'])
+
+# The Data Fetcher
+@st.cache_data(ttl=3600)
+def fetch_financials(tickers):
+    results = []
+    for t in tickers:
+        try:
+            stock = yf.Ticker(t)
+            info = stock.info
+            ev = info.get('enterpriseValue', 0)
+            rev = info.get('totalRevenue', 1)
+            ebitda = info.get('ebitda', 1)
+            
+            results.append({
+                "Ticker": t,
+                "Company": info.get('shortName', t),
+                "EV/Sales": round(ev / rev, 1) if ev else 0,
+                "EV/EBITDA": round(ev / ebitda, 1) if ev and ebitda else 0,
+                "Revenue Growth (%)": round(info.get('revenueGrowth', 0) * 100, 1)
+            })
+        except:
+            continue
+    return pd.DataFrame(results)
+
+# Execution
+df = fetch_financials([main_ticker] + peer_tickers)
+
+if not df.empty:
+    # Key Metrics
+    dt_val = df[df['Ticker'] == main_ticker]['EV/Sales'].values[0]
+    peer_median = df[df['Ticker'] != main_ticker]['EV/Sales'].median()
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Dynatrace EV/Sales", f"{dt_val}x")
+    col2.metric("Peer Median", f"{peer_median}x")
+    col3.metric("Gap/Opportunity", f"{round(dt_val - peer_median, 1)}x", delta_color="inverse")
+
+    # The Visual Benchmarking
+    st.subheader("Valuation Benchmarking (EV/Sales)")
+    fig = px.bar(df, x='Ticker', y='EV/Sales', color='Ticker', text_auto=True,
+                 color_discrete_map={main_ticker: '#0055FF'})
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Data Table
+    st.subheader("Raw Peer Data")
+    st.dataframe(df, use_container_width=True)
+
+    # The "Greg" Button (Excel Export)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Valuation_Comps')
+    
+    st.download_button(
+        label="📥 Download Data for Excel",
+        data=output.getvalue(),
+        file_name="Dynatrace_Peer_Comps.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.error("Could not fetch data. Please check your internet connection.")
